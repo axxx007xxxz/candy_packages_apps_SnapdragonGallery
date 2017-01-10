@@ -17,8 +17,13 @@
 package com.android.gallery3d.filtershow;
 
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.InputStream;
 import java.lang.ref.WeakReference;
+import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 import java.util.Vector;
 
@@ -38,7 +43,9 @@ import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
@@ -48,6 +55,7 @@ import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.provider.Settings;
 import android.support.v4.app.DialogFragment;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentActivity;
@@ -56,8 +64,11 @@ import android.support.v4.print.PrintHelper;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.TypedValue;
+import android.view.ContextMenu;
 import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.Menu;
+import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
@@ -69,17 +80,21 @@ import android.view.WindowManager;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.RelativeLayout;
 import android.widget.ShareActionProvider;
 import android.widget.ShareActionProvider.OnShareTargetSelectedListener;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import org.codeaurora.gallery.R;
 import com.android.gallery3d.app.PhotoPage;
+import com.android.gallery3d.common.Utils;
 import com.android.gallery3d.data.LocalAlbum;
 import com.android.gallery3d.filtershow.cache.ImageLoader;
 import com.android.gallery3d.filtershow.category.Action;
@@ -91,6 +106,9 @@ import com.android.gallery3d.filtershow.category.StraightenPanel;
 import com.android.gallery3d.filtershow.category.SwipableView;
 import com.android.gallery3d.filtershow.category.TruePortraitMaskEditorPanel;
 import com.android.gallery3d.filtershow.category.TrueScannerPanel;
+import com.android.gallery3d.filtershow.data.FilterPresetDBHelper;
+import com.android.gallery3d.filtershow.data.FilterPresetSource;
+import com.android.gallery3d.filtershow.data.FilterPresetSource.SaveOption;
 import com.android.gallery3d.filtershow.data.UserPresetsManager;
 import com.android.gallery3d.filtershow.editors.Editor;
 import com.android.gallery3d.filtershow.editors.EditorCrop;
@@ -105,7 +123,12 @@ import com.android.gallery3d.filtershow.editors.HazeBusterEditor;
 import com.android.gallery3d.filtershow.editors.ImageOnlyEditor;
 import com.android.gallery3d.filtershow.editors.SeeStraightEditor;
 import com.android.gallery3d.filtershow.editors.TrueScannerEditor;
+import com.android.gallery3d.filtershow.filters.FilterDualCamBasicRepresentation;
+import com.android.gallery3d.filtershow.filters.FilterDualCamFusionRepresentation;
+import com.android.gallery3d.filtershow.filters.FilterDualCamSketchRepresentation;
+import com.android.gallery3d.filtershow.filters.FilterFxRepresentation;
 import com.android.gallery3d.filtershow.filters.FilterMirrorRepresentation;
+import com.android.gallery3d.filtershow.filters.FilterPresetRepresentation;
 import com.android.gallery3d.filtershow.filters.FilterRepresentation;
 import com.android.gallery3d.filtershow.filters.FilterRotateRepresentation;
 import com.android.gallery3d.filtershow.filters.FilterUserPresetRepresentation;
@@ -127,6 +150,7 @@ import com.android.gallery3d.filtershow.provider.SharedImageProvider;
 import com.android.gallery3d.filtershow.state.StateAdapter;
 import com.android.gallery3d.filtershow.tools.DualCameraNativeEngine;
 import com.android.gallery3d.filtershow.tools.DualCameraNativeEngine.DdmStatus;
+import com.android.gallery3d.filtershow.tools.FilterGeneratorNativeEngine;
 import com.android.gallery3d.filtershow.tools.SaveImage;
 import com.android.gallery3d.filtershow.tools.TruePortraitNativeEngine;
 import com.android.gallery3d.filtershow.tools.XmpPresets;
@@ -134,6 +158,7 @@ import com.android.gallery3d.filtershow.tools.XmpPresets.XMresults;
 import com.android.gallery3d.filtershow.ui.ExportDialog;
 import com.android.gallery3d.filtershow.ui.FramedTextButton;
 import com.android.gallery3d.mpo.MpoParser;
+import com.android.gallery3d.ui.SlotView;
 import com.android.gallery3d.util.GalleryUtils;
 import com.android.photos.data.GalleryBitmapPool;
 import com.thundersoft.hz.selfportrait.detect.FaceDetect;
@@ -163,11 +188,13 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
 
     private static final int SELECT_PICTURE = 1;
     public static final int SELECT_FUSION_UNDERLAY = 2;
+    public static final int SELECT_FILTER = 3;
     private static final String LOGTAG = "FilterShowActivity";
 
     private boolean mShowingTinyPlanet = false;
     private boolean mShowingImageStatePanel = false;
     private boolean mShowingVersionsPanel = false;
+    private boolean mShowingFilterGenerator = false;
 
     private final Vector<ImageShow> mImageViews = new Vector<ImageShow>();
 
@@ -203,6 +230,7 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
     private CategoryAdapter mCategoryMakeupAdapter = null;
     private CategoryAdapter mCategoryDualCamAdapter = null;
     private CategoryAdapter mCategoryTruePortraitAdapter = null;
+    private CategoryAdapter mCategoryFilterPresetAdapter = null;
     private int mCurrentPanel = MainPanel.LOOKS;
     private Vector<FilterUserPresetRepresentation> mVersions =
             new Vector<FilterUserPresetRepresentation>();
@@ -231,6 +259,11 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
     private ProgressDialog mLoadingDialog;
     private long mRequestId = -1;
 
+    private DialogFragment mPresetDialog;
+    private FilterPresetSource mFilterPresetSource;
+    private ArrayList <SaveOption>  tempFilterArray = new ArrayList<SaveOption>();
+    private boolean mChangeable = false;
+
     public ProcessingService getProcessingService() {
         return mBoundService;
     }
@@ -253,8 +286,7 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
-            if (ProcessingService.SAVE_IMAGE_COMPLETE_ACTION.equals(action) &&
-                    !isSimpleEditAction()) {
+            if (ProcessingService.SAVE_IMAGE_COMPLETE_ACTION.equals(action)) {
                 Bundle bundle = intent.getExtras();
                 long requestId = bundle.getLong(ProcessingService.KEY_REQUEST_ID);
                 //only handle own request
@@ -806,6 +838,136 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
         }
         mUserPresetsManager.delete(rep.getId());
         updateUserPresetsFromManager();
+     }
+
+    public void handlePreset(Action action,View view,int i) {
+        mChangeable = true;
+        mHandledSwipeView = view;
+        final Action ac = action;
+        mFilterPresetSource = new FilterPresetSource(this);
+        switch (i) {
+            case R.id.renameButton:
+                final View layout = View.inflate(this,R.layout.filtershow_default_edittext,null);
+                AlertDialog.Builder renameAlertDialogBuilder = new AlertDialog.Builder(this);
+                renameAlertDialogBuilder.setTitle(R.string.rename_before_exit);
+                renameAlertDialogBuilder.setView(layout);
+                renameAlertDialogBuilder.setPositiveButton(R.string.ok,
+                        new DialogInterface.OnClickListener(){
+                            @Override
+                            public void onClick(DialogInterface dialog, int id){
+                                EditText mEditText = (EditText) layout.findViewById(
+                                        R.id.filtershow_default_edit);
+                                String name = String.valueOf(mEditText.getText());
+                                if ( (name.trim().length() == 0)|| name.isEmpty()) {
+                                    Toast.makeText(getApplicationContext(),
+                                            getString(R.string.filter_name_notification),
+                                            Toast.LENGTH_SHORT).show();
+                                } else if (isDuplicateName(name)) {
+                                    Toast.makeText(getApplicationContext(),
+                                            getString(R.string.filter_name_duplicate),
+                                            Toast.LENGTH_SHORT).show();
+                                } else {
+                                    renamePreset(ac, name);
+                                }
+                                dialog.dismiss();
+                            }
+                        }
+                );
+                renameAlertDialogBuilder.setNegativeButton(mCancel,
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick (DialogInterface dialog, int id){
+
+                            }
+                        }
+                );
+                renameAlertDialogBuilder.create().show();
+                break;
+
+            case R.id.deleteButton:
+                String name = action.getName();
+                AlertDialog.Builder deleteAlertDialogBuilder = new AlertDialog.Builder(this);
+                String textview ="Do you want to delete "+name+"?";
+                deleteAlertDialogBuilder.setMessage(textview)
+                        .setTitle(R.string.delete_before_exit);
+                deleteAlertDialogBuilder.setPositiveButton(R.string.ok,
+                        new DialogInterface.OnClickListener(){
+                            @Override
+                            public void onClick(DialogInterface dialog, int id){
+                                ((SwipableView) mHandledSwipeView).delete();
+                                dialog.dismiss();
+                            }
+                        }
+                );
+                deleteAlertDialogBuilder.setNegativeButton(mCancel,
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick (DialogInterface dialog, int id){
+                                dialog.dismiss();
+
+                            }
+                        }
+                );
+                deleteAlertDialogBuilder.create().show();
+                break;
+        }
+    }
+
+    public void removePreset(Action action) {
+        FilterPresetRepresentation rep =
+                (FilterPresetRepresentation)action.getRepresentation();
+        if (rep == null) {
+            return;
+        }
+        if (tempFilterArray.size() != 0) {
+            for (int i = 0; i < tempFilterArray.size(); i++) {
+                if (rep.getId() == tempFilterArray.get(i)._id) {
+                    tempFilterArray.remove(i);
+                    fillLooks();
+                    return;
+                }
+            }
+        }
+        mFilterPresetSource.removePreset(rep.getId());
+        fillLooks();
+    }
+
+    public void renamePreset(Action action, String name) {
+        FilterPresetRepresentation rep =
+                (FilterPresetRepresentation)action.getRepresentation();
+        if (rep == null) {
+            return;
+        }
+        if (tempFilterArray.size() != 0) {
+            for (int i = 0; i < tempFilterArray.size(); i++) {
+                if (rep.getId() == tempFilterArray.get(i)._id) {
+                    tempFilterArray.get(i).name = name;
+                    fillLooks();
+                    return;
+                }
+            }
+        }
+        mFilterPresetSource.updatePresetName(rep.getId(),name);
+        fillLooks();
+    }
+
+    public boolean isDuplicateName(String name) {
+        ArrayList<String> nameSum = new ArrayList<String>();
+        if (tempFilterArray.size() != 0) {
+            for (int i = 0; i < tempFilterArray.size(); i++)
+                nameSum.add(tempFilterArray.get(i).name);
+        }
+
+        ArrayList<SaveOption> ret = mFilterPresetSource.getAllUserPresets();
+        if (ret != null) {
+            for (int id = 0; id < ret.size(); id++)
+                nameSum.add(ret.get(id).name);
+        }
+
+        for (int i = 0; i < nameSum.size(); i++) {
+            if (name.equals(nameSum.get(i))) return true;
+        }
+        return false;
     }
 
     private void fillEffects() {
@@ -869,6 +1031,41 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
                 representation.setName(getString(representation.getTextId()));
             }
             mCategoryTruePortraitAdapter.add(new Action(this, representation));
+        }
+    }
+
+    private void fillPresetFilter() {
+        FiltersManager filtersManager = FiltersManager.getManager();
+        ArrayList<FilterRepresentation> filtersRepresentations = filtersManager.getFilterPreset();
+        if(mChangeable) {
+            ArrayList<FilterRepresentation> mFilterPreset = new ArrayList<FilterRepresentation>();
+            ArrayList<SaveOption> ret = mFilterPresetSource.getAllUserPresets();
+            if (ret == null) return;
+            for (int id = 0; id < ret.size(); id ++) {
+                FilterPresetRepresentation representation = new FilterPresetRepresentation(
+                        ret.get(id).name, ret.get(id)._id, id + 1);
+                Uri filteredUri = Uri.parse(ret.get(id).Uri);
+                representation.setUri(filteredUri);
+                representation.setSerializationName("Custom");
+                mFilterPreset.add(representation);
+            }
+            if (tempFilterArray.size() != 0){
+                for (int id = 0; id < tempFilterArray.size(); id ++) {
+                    FilterPresetRepresentation representation = new FilterPresetRepresentation(
+                            tempFilterArray.get(id).name, tempFilterArray.get(id)._id, id + 1);
+                    Uri filteredUri = Uri.parse(tempFilterArray.get(id).Uri);
+                    representation.setUri(filteredUri);
+                    representation.setSerializationName("Custom");
+                    mFilterPreset.add(representation);
+                }
+            }
+            filtersRepresentations = mFilterPreset;
+            mChangeable = false;
+        }
+
+        if (filtersRepresentations == null) return;
+        for (FilterRepresentation representation : filtersRepresentations) {
+            mCategoryLooksAdapter.add(new Action(this, representation, Action.FULL_VIEW,true));
         }
     }
 
@@ -1156,6 +1353,23 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
                 return;
             }
         }
+        if (representation.getFilterType() == FilterRepresentation.TYPE_DUALCAM) {
+            DisplayMetrics dm = getResources().getDisplayMetrics();
+            float[] mTmpPoint = new float[2];
+            mTmpPoint[0] = dm.widthPixels/2;
+            mTmpPoint[1] = dm.heightPixels/2;
+            Matrix m = MasterImage.getImage().getScreenToImageMatrix(true);
+            m.mapPoints(mTmpPoint);
+            if (representation instanceof FilterDualCamBasicRepresentation) {
+                ((FilterDualCamBasicRepresentation)representation).setPoint((int)mTmpPoint[0],(int)mTmpPoint[1]);
+            }
+            if (representation instanceof FilterDualCamFusionRepresentation) {
+                ((FilterDualCamFusionRepresentation)representation).setPoint((int)mTmpPoint[0],(int)mTmpPoint[1]);
+            }
+            if (representation instanceof FilterDualCamSketchRepresentation) {
+                ((FilterDualCamSketchRepresentation)representation).setPoint((int)mTmpPoint[0],(int)mTmpPoint[1]);
+            }
+        }
         useFilterRepresentation(representation);
 
         loadEditorPanel(representation);
@@ -1219,6 +1433,13 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
     @Override
     public void onDismiss(DialogInterface dialogInterface) {
         mCurrentDialog = null;
+    }
+
+    public void onFilterGeneratorLaunched(boolean b) {
+        mPresetDialog = null;
+        if (b == true) {
+            pickImage(SELECT_FILTER);
+        }
     }
 
     private class LoadHighresBitmapTask extends AsyncTask<Void, Void, Boolean> {
@@ -1290,23 +1511,20 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
                     mAuxImgData == null) {
                 // parse failed
                 MasterImage.getImage().setDepthMapLoadingStatus(DdmStatus.DDM_FAILED);
-                Fragment currentPanel = getSupportFragmentManager().findFragmentByTag(MainPanel.FRAGMENT_TAG);
-                if (currentPanel instanceof MainPanel) {
-                    MainPanel mainPanel = (MainPanel) currentPanel;
-                    mainPanel.updateDualCameraButton();
-                }
             } else {
+                MasterImage.getImage().setDepthMapLoadingStatus(DdmStatus.DDM_LOADING);
                 mLoadMpoTask = new LoadMpoDataTask();
                 mLoadMpoTask.execute(mPrimaryImgData, mAuxImgData);
+            }
+            Fragment currentPanel = getSupportFragmentManager().findFragmentByTag(MainPanel.FRAGMENT_TAG);
+            if (currentPanel instanceof MainPanel) {
+                MainPanel mainPanel = (MainPanel) currentPanel;
+                mainPanel.updateDualCameraButton();
             }
         }
     }
 
     private class LoadMpoDataTask extends AsyncTask<byte[], Void, Boolean> {
-        @Override
-        protected void onPreExecute() {
-            MasterImage.getImage().setDepthMapLoadingStatus(DdmStatus.DDM_LOADING);
-        }
 
         @Override
         protected Boolean doInBackground(byte[]... params) {
@@ -1528,6 +1746,13 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
         }
 
         mUserPresetsManager.close();
+        if (mFilterPresetSource !=null) {
+            mFilterPresetSource.close();
+        }
+
+        if (tempFilterArray != null) {
+            tempFilterArray.clear();
+        }
         unregisterReceiver(mHandlerReceiver);
         doUnbindService();
         if (mReleaseDualCamOnDestory && DualCameraNativeEngine.getInstance().isLibLoaded())
@@ -1537,7 +1762,7 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
 
     // TODO: find a more robust way of handling image size selection
     // for high screen densities.
-    private int getScreenImageSize() {
+    public int getScreenImageSize() {
         DisplayMetrics outMetrics = new DisplayMetrics();
         getWindowManager().getDefaultDisplay().getMetrics(outMetrics);
         return Math.max(outMetrics.heightPixels, outMetrics.widthPixels);
@@ -1716,8 +1941,14 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
     }
 
     public void addNewPreset() {
-        DialogFragment dialog = new PresetManagementDialog();
-        dialog.show(getSupportFragmentManager(), "NoticeDialogFragment");
+        boolean skipIntro = GalleryUtils.getBooleanPref(this,
+                this.getString(R.string.pref_filtergenerator_intro_show_key), false);
+        if (!skipIntro) {
+            mPresetDialog = new PresetManagementDialog();
+            mPresetDialog.show(getSupportFragmentManager(), "NoticeDialogFragment");
+        } else {
+            onFilterGeneratorLaunched(true);
+        }
     }
 
     private void manageUserPresets() {
@@ -1759,19 +1990,22 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
         if (mCategoryLooksAdapter != null) {
             fillLooks();
         }
-        if (presets.size() > 0) {
+      /*  if (presets.size() > 0) {
             mCategoryLooksAdapter.add(new Action(this, Action.SPACER));
-        }
+        } */
         mUserPresetsAdapter.clear();
+
+        if (presets.size() > 0) {
+            mCategoryLooksAdapter.add(new Action(this, Action.ADD_ACTION));
+        }
+
         for (int i = 0; i < presets.size(); i++) {
             FilterUserPresetRepresentation representation = presets.get(i);
             mCategoryLooksAdapter.add(
                     new Action(this, representation, Action.FULL_VIEW, true));
             mUserPresetsAdapter.add(new Action(this, representation, Action.FULL_VIEW));
         }
-        if (presets.size() > 0) {
-            mCategoryLooksAdapter.add(new Action(this, Action.ADD_ACTION));
-        }
+
         mCategoryLooksAdapter.notifyDataSetChanged();
         mCategoryLooksAdapter.notifyDataSetInvalidated();
     }
@@ -1807,6 +2041,14 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
         for (FilterRepresentation representation : filtersRepresentations) {
             mCategoryLooksAdapter.add(new Action(this, representation, Action.FULL_VIEW));
         }
+        if (FilterGeneratorNativeEngine.getInstance().isLibLoaded()) {
+            if (mUserPresetsManager.getRepresentations() == null
+                    || mUserPresetsManager.getRepresentations().size() == 0) {
+                mCategoryLooksAdapter.add(new Action(this, Action.ADD_ACTION));
+            }
+        }
+
+        fillPresetFilter();
 
         Fragment panel = getSupportFragmentManager().findFragmentByTag(MainPanel.FRAGMENT_TAG);
         if (panel != null) {
@@ -1873,6 +2115,21 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
         super.onConfigurationChanged(newConfig);
 
         setDefaultValues();
+
+        switch (newConfig.orientation) {
+            case (Configuration.ORIENTATION_LANDSCAPE):
+                if (mPresetDialog != null) {
+                    mPresetDialog.dismiss();
+                    mPresetDialog.show(getSupportFragmentManager(), "NoticeDialogFragment");
+                }
+                break;
+            case (Configuration.ORIENTATION_PORTRAIT):
+                if (mPresetDialog != null) {
+                    mPresetDialog.dismiss();
+                    mPresetDialog.show(getSupportFragmentManager(), "NoticeDialogFragment");
+                }
+                break;
+        }
         if (isShowEditCropPanel()) {
             mIsReloadByConfigurationChanged = true;
             loadEditorCropPanel();
@@ -1897,6 +2154,7 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
             mCategoryFiltersAdapter.removeTinyPlanet();
         }
         stopLoadingIndicator();
+
     }
 
     public void setupMasterImage() {
@@ -2059,10 +2317,97 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
                     EditorTruePortraitFusion editor = (EditorTruePortraitFusion)mCurrentEditor;
                     editor.setUnderlayImageUri(underlayImageUri);
                 }
+            } else if (requestCode == SELECT_FILTER ) {
+                Uri FilterImageUri = data.getData();
+                mFilterPresetSource = new FilterPresetSource(this);
+                int id = nameFilter(mFilterPresetSource, tempFilterArray);
+                FilterPresetRepresentation fp= new FilterPresetRepresentation(
+                        getString(R.string.filtershow_preset_title)+id, id, id);
+                fp.setSerializationName("Custom");
+                fp.setUri(FilterImageUri);
+                ImagePreset preset = new ImagePreset();
+                preset.addFilter(fp);
+                SaveOption sp= new SaveOption();
+                sp._id = id;
+                sp.name = "Custom"+id;
+                sp.Uri = FilterImageUri.toString();
+                tempFilterArray.add(sp);
+                FiltersManager.getManager().addRepresentation(fp);
+                mCategoryLooksAdapter.add(new Action(this, fp
+                        , Action.FULL_VIEW,true));
+
             }
         }
     }
 
+
+    private int nameFilter(FilterPresetSource source,
+                                            ArrayList <SaveOption> tempFilterArray) {
+        String s,s1,s2;
+        ArrayList<SaveOption> sp = source.getAllUserPresets();
+        ArrayList<Integer> temp = new ArrayList<Integer>();
+        if (sp != null) {
+            for (int i = 0; i < sp.size(); i++) {
+                s = sp.get(i).name;
+                if (s.length() > "Custom".length()) {
+                    s1 = s.substring(0, 6);
+                    if (s1.equals("Custom")) {
+                        s2 = s.substring(6);
+                        int tem;
+                        try {
+                            tem = Integer.parseInt(s2);
+                        } catch (NumberFormatException e) {
+                            continue;
+                        }
+                        temp.add(tem);
+                    }
+                }
+            }
+        }
+
+        if (tempFilterArray.size() != 0 ){
+            for (int i = 0; i < tempFilterArray.size(); i++) {
+                s = tempFilterArray.get(i).name;
+                if (s.length() > "Custom".length()) {
+                    s1 = s.substring(0, 6);
+                    if (s1.equals("Custom")) {
+                        s2 = s.substring(6);
+                        int tem;
+                        try {
+                            tem = Integer.parseInt(s2);
+                        } catch (NumberFormatException e) {
+                            continue;
+                        }
+                        temp.add(tem);
+                    }
+                }
+            }
+
+        }
+
+        if (temp != null) {
+            Collections.sort(temp);
+            for (int i = 1; i <= temp.size(); i++){
+                if (temp.get(i-1)!= i){
+                    return i;
+                }
+            }
+        }
+        return temp.size()+1;
+    }
+
+
+    public static boolean completeSaveFilters (FilterPresetSource mFilterPresetSource,
+                                               ArrayList<SaveOption> tempFilterArray) {
+
+        for (int i = 0; i < tempFilterArray.size(); i++){
+            String name = tempFilterArray.get(i).name;
+            String filteredUri = tempFilterArray.get(i).Uri;
+            if (mFilterPresetSource.insertPreset(name,filteredUri) == false) return false;
+        }
+        tempFilterArray.clear();
+        return true;
+    }
 
     public void saveImage() {
         if (mImageShow.hasModifications()) {
@@ -2073,6 +2418,9 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
             mReleaseDualCamOnDestory = false;
             showSavingProgress(albumName);
             mImageShow.saveImage(this, null);
+            if ( tempFilterArray.size() != 0) {
+                completeSaveFilters(mFilterPresetSource, tempFilterArray);
+            }
         } else {
             done();
         }
@@ -2149,7 +2497,7 @@ DialogInterface.OnDismissListener, PopupMenu.OnDismissListener{
                 if (mHandledSwipeViewLastDelta > distance) {
                     ((SwipableView) mHandledSwipeView).delete();
                 }
-            }
+           }
             return true;
         }
         return super.dispatchTouchEvent(ev);
