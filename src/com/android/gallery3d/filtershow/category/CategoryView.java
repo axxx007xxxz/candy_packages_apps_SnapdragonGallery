@@ -26,13 +26,17 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.view.LayoutInflater;
 import android.view.MenuItem;
+import android.view.ContextThemeWrapper;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ActionMode;
 import android.widget.PopupMenu;
 import org.codeaurora.gallery.R;
+
+import com.android.gallery3d.app.Log;
 import com.android.gallery3d.filtershow.FilterShowActivity;
 import com.android.gallery3d.filtershow.filters.FilterRepresentation;
+import com.android.gallery3d.filtershow.filters.FilterWatermarkRepresentation;
 import com.android.gallery3d.filtershow.ui.SelectionRenderer;
 
 import java.util.ArrayList;
@@ -50,6 +54,7 @@ public class CategoryView extends IconView
     private int mSelectionStroke;
     private Paint mBorderPaint;
     private int mBorderStroke;
+    private Context mContext;
     private float mStartTouchX = 0;
     private float mStartTouchY = 0;
     private float mDeleteSlope = 20;
@@ -61,6 +66,7 @@ public class CategoryView extends IconView
 
     public CategoryView(Context context) {
         super(context);
+        mContext = context;
         setOnClickListener(this);
         setOnLongClickListener(this);
         Resources res = getResources();
@@ -129,10 +135,19 @@ public class CategoryView extends IconView
         }
         super.onDraw(canvas);
         if (mAdapter.isSelected(this)) {
-            SelectionRenderer.drawSelection(canvas, getMargin() / 2, getMargin(),
-                    getWidth() - getMargin() / 2, getHeight() - getMargin(),
-                    mSelectionStroke, mSelectPaint, mBorderStroke, mBorderPaint);
+            mAction.getRepresentation().setCurrentTheme(
+                    new ContextThemeWrapper(mContext, R.style.SelectedFillColor).getTheme());
+            if (mAction.getRepresentation().getFilterType() != FilterRepresentation.TYPE_WATERMARK_CATEGORY
+                    && mAction.getRepresentation().getFilterType() != FilterRepresentation.TYPE_WATERMARK) {
+                SelectionRenderer.drawSelection(canvas, getMargin() / 2, getMargin(),
+                        getWidth() - getMargin() / 2, getHeight() - getMargin(),
+                        mSelectionStroke, mSelectPaint, mBorderStroke, mBorderPaint);
+            }
+        } else {
+            mAction.getRepresentation().setCurrentTheme(
+                    new ContextThemeWrapper(mContext, R.style.DefaultFillColor).getTheme());
         }
+        mAction.drawOverlay();
     }
 
     public void setAction(Action action, CategoryAdapter adapter) {
@@ -172,38 +187,37 @@ public class CategoryView extends IconView
         }
     }
 
-//    @Override
-//    public boolean onTouchEvent(MotionEvent event) {
-//        boolean ret = super.onTouchEvent(event);
-//        FilterShowActivity activity = (FilterShowActivity) getContext();
-//
-//        if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-//            activity.startTouchAnimation(this, event.getX(), event.getY());
-//        }
-//        if (!canBeRemoved()) {
-//            return ret;
-//        }
-//        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-//            mStartTouchY = event.getY();
-//            mStartTouchX = event.getX();
-//
-//        }
-//        if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-//            setTranslationX(0);
-//            setTranslationY(0);
-//        }
-//        if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-//            float delta = event.getY() - mStartTouchY;
-//            if (getOrientation() == CategoryView.VERTICAL) {
-//                delta = event.getX() - mStartTouchX;
-//            }
-//        }
-////            if (Math.abs(delta) > mDeleteSlope) {
-//                activity.setHandlesSwipeForView(this, mStartTouchX, mStartTouchY);
-////            }
-////        }
-//        return true;
-//    }
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        boolean ret = super.onTouchEvent(event);
+        FilterShowActivity activity = (FilterShowActivity) getContext();
+
+        if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+            activity.startTouchAnimation(this, event.getX(), event.getY());
+        }
+        if (!canBeRemoved() || checkPreset()) {
+            return ret;
+        }
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            mStartTouchY = event.getY();
+            mStartTouchX = event.getX();
+
+        }
+        if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+            setTranslationX(0);
+            setTranslationY(0);
+        }
+        if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+            float delta = event.getY() - mStartTouchY;
+            if (getOrientation() == CategoryView.VERTICAL) {
+                delta = event.getX() - mStartTouchX;
+            }
+           if (Math.abs(delta) > mDeleteSlope) {
+                activity.setHandlesSwipeForView(this, mStartTouchX, mStartTouchY);
+            }
+        }
+        return true;
+    }
 
     @Override
     public boolean onLongClick(View view){
@@ -243,6 +257,10 @@ public class CategoryView extends IconView
         super.drawBottomRect(canvas);
         FilterRepresentation filterRepresentation = mAction.getRepresentation();
         if (filterRepresentation != null) {
+            if (filterRepresentation.getFilterType() == FilterRepresentation.TYPE_WATERMARK
+                    || filterRepresentation.getFilterType() == FilterRepresentation.TYPE_WATERMARK_CATEGORY) {
+                return;
+            }
             if (filterRepresentation.getFilterType() == FilterRepresentation.TYPE_FX) {
                 mPaint.setColor(getResources().getColor(filterRepresentation.getColorId()));
             } else {
@@ -257,4 +275,15 @@ public class CategoryView extends IconView
                     mPaint);
         }
     }
+
+    private boolean checkPreset () {
+        FilterRepresentation filterRepresentation = mAction.getRepresentation();
+        if (filterRepresentation != null) {
+            if (filterRepresentation.getFilterType() == FilterRepresentation.TYPE_PRESETFILTER) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 }
