@@ -677,6 +677,7 @@ public abstract class PhotoPage extends ActivityState implements
             case R.id.photopage_bottom_control_share:
                  if (mModel != null && mModel.getMediaItem(0) != null) {
                  Uri uri = mActivity.getDataManager().getContentUri(mModel.getMediaItem(0).getPath());
+                 mActivity.isTopMenuShow = true;
                  mShareIntent.setType(MenuExecutor.getMimeType(mModel
                     .getMediaItem(0).getMediaType()));
                  mShareIntent.putExtra(Intent.EXTRA_STREAM, uri);
@@ -707,7 +708,8 @@ public abstract class PhotoPage extends ActivityState implements
 
     @Override
     public boolean canDisplay3DButton() {
-        return bShow3DButton && mShowBars && !mPhotoView.getFilmMode();
+        return bShow3DButton && mShowBars
+                && (mPhotoView == null ? false : !mPhotoView.getFilmMode());
     }
 
     @Override

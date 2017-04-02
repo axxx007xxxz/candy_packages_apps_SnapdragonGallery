@@ -182,7 +182,6 @@ public class EditorDualCamFusion extends Editor {
                             activity.leaveSeekBarPanel();
                         }
                     });
-
                     dialog.setOnOkButtonClickListener(new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int id) {
